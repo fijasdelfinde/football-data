@@ -9,7 +9,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-SPREADSHEET_ID = "1IBl07cmoESePyLCSTB2cKzHq8nIU9cbkuscCzh-SmF8"
+SPREADSHEET_ID = "1nDFuCEiqZRKpkdCBI9GBt3ck47hFz__dhDpixojJLLM"
 
 LEAGUE_SEASON_LIST = [
     (8, 77559),   # LaLiga
