@@ -1,5 +1,4 @@
 import pandas as pd
-import logging
 from api_client import get
 
 URL = "https://sofascore.p.rapidapi.com/matches/get-statistics"
@@ -11,8 +10,6 @@ def get_stats(headers, match_ids):
     for match_id in match_ids:
 
         data = get(URL, headers, {"matchId": str(match_id)}, f"stats-{match_id}")
-
-        logging.warning(f"[stats-{match_id}] response keys: {list(data.keys()) if data else data}")
         
         if not data or "statistics" not in data:
             continue
