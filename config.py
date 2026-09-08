@@ -12,9 +12,9 @@ HEADERS = {
 SPREADSHEET_ID = "1nDFuCEiqZRKpkdCBI9GBt3ck47hFz__dhDpixojJLLM"
 
 LEAGUE_SEASON_LIST = [
-    (8, 77559),   # LaLiga
-    (17, 76986),  # Premier League
-    (23, 76457),  # Serie A
-    (325, 87678), # Brasileirao
-    (35, 77333)   # Bundesliga
+    (8, 97268),    # LaLiga
+    (17, 96668),   # Premier League
+    (23, 95836),   # Serie A
+    (325, 87678),  # Brasileirao
+    (35, 97464)    # Bundesliga
 ]
