@@ -36,15 +36,10 @@ def main():
     if df_matches.empty:
 
         logging.error(
-            "No se extrajeron partidos. "
-            "Se detiene el proceso para evitar modificar Sheets."
+            "No se extrajeron partidos."
         )
 
         return
-
-    # ============================================================
-    # LIMPIEZA
-    # ============================================================
 
     df_matches = df_matches.fillna("")
 
@@ -63,11 +58,11 @@ def main():
     )
 
     logging.info(
-        f"Partidos extraídos y limpios: {len(df_matches)}"
+        f"Partidos extraídos: {len(df_matches)}"
     )
 
     # ============================================================
-    # 2. CONECTAR A GOOGLE SHEETS
+    # 2. CONECTAR GOOGLE SHEETS
     # ============================================================
 
     ws_matches, ws_stats = connect_sheets(
@@ -91,25 +86,23 @@ def main():
 
         existing_match_ids = set()
 
+    elif "match_id" in existing_matches.columns:
+
+        existing_matches["match_id"] = (
+            existing_matches["match_id"]
+            .astype(str)
+        )
+
+        existing_match_ids = set(
+            existing_matches["match_id"]
+        )
+
     else:
 
-        if "match_id" in existing_matches.columns:
-
-            existing_matches["match_id"] = (
-                existing_matches["match_id"]
-                .astype(str)
-            )
-
-            existing_match_ids = set(
-                existing_matches["match_id"]
-            )
-
-        else:
-
-            existing_match_ids = set()
+        existing_match_ids = set()
 
     # ============================================================
-    # 4. IDENTIFICAR PARTIDOS NUEVOS
+    # 4. SOLO PARTIDOS NUEVOS
     # ============================================================
 
     new_matches = df_matches[
@@ -119,11 +112,11 @@ def main():
     ].copy()
 
     logging.info(
-        f"Partidos nuevos encontrados: {len(new_matches)}"
+        f"Partidos nuevos: {len(new_matches)}"
     )
 
     # ============================================================
-    # 5. AGREGAR PARTIDOS NUEVOS A GOOGLE SHEETS
+    # 5. AGREGAR PARTIDOS NUEVOS
     # ============================================================
 
     if not new_matches.empty:
@@ -134,48 +127,41 @@ def main():
         )
 
         logging.info(
-            f"Se agregaron {len(new_matches)} "
+            f"Agregados {len(new_matches)} "
             f"partidos nuevos a Matches."
         )
 
     # ============================================================
-    # 6. IDENTIFICAR PARTIDOS CUYAS ESTADÍSTICAS DEBEMOS
-    #    CONSULTAR
+    # 6. DEFINIR PARTIDOS PARA ACTUALIZAR ESTADÍSTICAS
     #
-    #    A) partidos nuevos
-    #    B) partidos recientes
+    # Nuevos + últimos RECENT_DAYS días
     # ============================================================
 
-    # IDs de partidos nuevos
     new_match_ids = set(
         new_matches["match_id"].astype(str)
     )
 
-    # Fecha límite para refrescar estadísticas
+    df_matches_dates = df_matches.copy()
+
+    df_matches_dates["date_parsed"] = pd.to_datetime(
+        df_matches_dates["date"],
+        errors="coerce"
+    )
+
     cutoff_date = (
         datetime.utcnow()
         - timedelta(days=RECENT_DAYS)
     )
 
-    # Copia para trabajar fechas
-    df_matches_for_stats = df_matches.copy()
-
-    df_matches_for_stats["date_parsed"] = pd.to_datetime(
-        df_matches_for_stats["date"],
-        errors="coerce"
-    )
-
-    # Partidos de los últimos N días
-    recent_matches = df_matches_for_stats[
-        df_matches_for_stats["date_parsed"] >= cutoff_date
-    ].copy()
+    recent_matches = df_matches_dates[
+        df_matches_dates["date_parsed"] >= cutoff_date
+    ]
 
     recent_match_ids = set(
-        recent_matches["match_id"].astype(str)
+        recent_matches["match_id"]
+        .astype(str)
     )
 
-    # Unión:
-    # nuevos + recientes
     stats_match_ids = sorted(
         new_match_ids | recent_match_ids
     )
@@ -186,12 +172,12 @@ def main():
     )
 
     logging.info(
-        f"Partidos recientes para refrescar estadísticas: "
+        f"Partidos recientes para refrescar: "
         f"{len(recent_match_ids)}"
     )
 
     logging.info(
-        f"Total partidos a consultar estadísticas: "
+        f"TOTAL estadísticas a consultar: "
         f"{len(stats_match_ids)}"
     )
 
@@ -216,7 +202,6 @@ def main():
 
     if not df_stats.empty:
 
-        # Solo periodo ALL
         df_stats_filtered = df_stats[
             df_stats["period"] == "ALL"
         ].copy()
@@ -261,12 +246,12 @@ def main():
         )
 
     logging.info(
-        f"Filas de estadísticas obtenidas: "
-        f"{len(df_stats_filtered)}"
+        f"Estadísticas recibidas: "
+        f"{len(df_stats_filtered)} filas"
     )
 
     # ============================================================
-    # 9. LEER STATS EXISTENTES
+    # 9. LEER STATS ACTUALES
     # ============================================================
 
     existing_stats_data = (
@@ -278,21 +263,17 @@ def main():
     )
 
     # ============================================================
-    # 10. REEMPLAZAR STATS DE LOS PARTIDOS REFRESCADOS
+    # 10. CREAR MAPA DE FILAS EXISTENTES
     #
-    # Esto evita duplicados.
+    # CLAVE ÚNICA:
+    # match_id + key
     #
-    # Ejemplo:
-    #
-    # Antes:
-    # match 123 → estadísticas antiguas
-    #
-    # Hoy:
-    # match 123 → estadísticas nuevas
-    #
-    # Resultado:
-    # match 123 → SOLO estadísticas nuevas
+    # Así:
+    # partido 123 + ballPossession
+    # es una fila única.
     # ============================================================
+
+    existing_row_map = {}
 
     if not existing_stats.empty:
 
@@ -303,132 +284,139 @@ def main():
                 .astype(str)
             )
 
-            # Eliminar del histórico las estadísticas
-            # de los partidos que estamos refrescando.
-            existing_stats_to_keep = (
-                existing_stats[
-                    ~existing_stats["match_id"].isin(
-                        stats_match_ids
-                    )
-                ].copy()
-            )
+        if "key" in existing_stats.columns:
 
-        else:
+            for idx, row in existing_stats.iterrows():
 
-            existing_stats_to_keep = (
-                existing_stats.copy()
-            )
+                match_id = str(
+                    row.get("match_id", "")
+                )
 
-    else:
+                key = str(
+                    row.get("key", "")
+                )
 
-        existing_stats_to_keep = pd.DataFrame(
-            columns=[
-                "match_id",
-                "group",
-                "key",
-                "home_value",
-                "away_value"
-            ]
+                if match_id and key:
+
+                    # +2 porque:
+                    # fila 1 = encabezados
+                    # dataframe comienza en índice 0
+                    existing_row_map[
+                        (match_id, key)
+                    ] = idx + 2
+
+    # ============================================================
+    # 11. ACTUALIZAR O INSERTAR STATS
+    # ============================================================
+
+    rows_to_append = []
+
+    updated_count = 0
+    inserted_count = 0
+
+    for _, row in df_stats_filtered.iterrows():
+
+        match_id = str(
+            row["match_id"]
         )
 
-    # ============================================================
-    # 11. COMBINAR HISTÓRICO + ESTADÍSTICAS ACTUALIZADAS
-    # ============================================================
+        key = str(
+            row["key"]
+        )
 
-    final_stats = pd.concat(
-        [
-            existing_stats_to_keep,
-            df_stats_filtered
-        ],
-        ignore_index=True
-    )
-
-    if not final_stats.empty:
-
-        final_stats = final_stats[
-            [
-                "match_id",
-                "group",
-                "key",
-                "home_value",
-                "away_value"
-            ]
+        values = [
+            match_id,
+            row["group"],
+            key,
+            row["home_value"],
+            row["away_value"]
         ]
 
-        final_stats["match_id"] = (
-            final_stats["match_id"]
-            .astype(str)
+        unique_key = (
+            match_id,
+            key
         )
 
-        final_stats = (
-            final_stats
-            .drop_duplicates(
-                subset=["match_id", "key"],
-                keep="last"
-            )
-        )
+        # --------------------------------------------------------
+        # YA EXISTE → ACTUALIZAR
+        # --------------------------------------------------------
 
-    # ============================================================
-    # 12. ACTUALIZAR HOJA STATS
-    #
-    # Se conserva el histórico y se reemplazan solamente
-    # las estadísticas de los partidos refrescados.
-    # ============================================================
+        if unique_key in existing_row_map:
 
-    if stats_match_ids:
+            row_number = existing_row_map[
+                unique_key
+            ]
 
-        ws_stats.clear()
-
-        headers_stats = [
-            "match_id",
-            "group",
-            "key",
-            "home_value",
-            "away_value"
-        ]
-
-        ws_stats.append_row(
-            headers_stats,
-            value_input_option="USER_ENTERED"
-        )
-
-        if not final_stats.empty:
-
-            ws_stats.append_rows(
-                final_stats.values.tolist(),
+            ws_stats.update(
+                f"A{row_number}:E{row_number}",
+                [values],
                 value_input_option="USER_ENTERED"
             )
 
-        logging.info(
-            "Hoja Stats actualizada correctamente."
-        )
+            updated_count += 1
 
-    else:
+        # --------------------------------------------------------
+        # NO EXISTE → AGREGAR
+        # --------------------------------------------------------
 
-        logging.info(
-            "No hubo estadísticas nuevas ni recientes "
-            "para actualizar."
-        )
+        else:
+
+            rows_to_append.append(
+                values
+            )
+
+            # Lo agregamos al mapa para evitar
+            # duplicados dentro de la misma ejecución.
+            existing_row_map[
+                unique_key
+            ] = -1
+
+            inserted_count += 1
 
     # ============================================================
-    # 13. RESUMEN FINAL
+    # 12. INSERTAR NUEVAS ESTADÍSTICAS EN BLOQUE
+    # ============================================================
+
+    if rows_to_append:
+
+        ws_stats.append_rows(
+            rows_to_append,
+            value_input_option="USER_ENTERED"
+        )
+
+    logging.info(
+        f"Estadísticas actualizadas: {updated_count}"
+    )
+
+    logging.info(
+        f"Estadísticas nuevas: {inserted_count}"
+    )
+
+    # ============================================================
+    # 13. RESUMEN
     # ============================================================
 
     logging.info("==========================================")
     logging.info("ACTUALIZACIÓN TERMINADA")
     logging.info(
-        f"Total partidos extraídos: {len(df_matches)}"
+        f"Total partidos encontrados: "
+        f"{len(df_matches)}"
     )
     logging.info(
-        f"Nuevos partidos agregados: {len(new_matches)}"
+        f"Nuevos partidos agregados: "
+        f"{len(new_matches)}"
     )
     logging.info(
-        f"Partidos consultados para estadísticas: "
+        f"Partidos revisados para estadísticas: "
         f"{len(stats_match_ids)}"
     )
     logging.info(
-        f"Filas de estadísticas obtenidas: "
-        f"{len(df_stats_filtered)}"
+        f"Stats actualizadas: "
+        f"{updated_count}"
+    )
+    logging.info(
+        f"Stats nuevas: "
+        f"{inserted_count}"
     )
     logging.info("==========================================")
 
