@@ -1,11 +1,9 @@
-import logging
 import requests
+import logging
 
 
 def get(url, headers, params=None, name="request"):
-
     try:
-
         response = requests.get(
             url,
             headers=headers,
@@ -18,26 +16,22 @@ def get(url, headers, params=None, name="request"):
         return response.json()
 
     except requests.exceptions.HTTPError as e:
-
         logging.error(
             f"[{name}] HTTP error: {e} | "
             f"status={response.status_code}"
         )
 
     except requests.exceptions.RequestException as e:
-
         logging.error(
             f"[{name}] request error: {e}"
         )
 
     except ValueError as e:
-
         logging.error(
             f"[{name}] JSON error: {e}"
         )
 
     except Exception as e:
-
         logging.error(
             f"[{name}] unknown error: {e}"
         )
