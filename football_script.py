@@ -16,6 +16,17 @@ from load_sheets import connect_sheets
 from utils import setup_logging
 
 
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
+# Cantidad máxima de actualizaciones de celdas que enviaremos
+# en cada petición a Google Sheets.
+#
+# Esto evita superar la cuota de escrituras por minuto.
+BATCH_SIZE = 100
+
+
 def main():
 
     setup_logging()
@@ -102,7 +113,7 @@ def main():
         existing_match_ids = set()
 
     # ============================================================
-    # 4. SOLO PARTIDOS NUEVOS
+    # 4. IDENTIFICAR SOLO PARTIDOS NUEVOS
     # ============================================================
 
     new_matches = df_matches[
@@ -116,7 +127,7 @@ def main():
     )
 
     # ============================================================
-    # 5. AGREGAR PARTIDOS NUEVOS
+    # 5. AGREGAR NUEVOS PARTIDOS
     # ============================================================
 
     if not new_matches.empty:
@@ -132,9 +143,10 @@ def main():
         )
 
     # ============================================================
-    # 6. DEFINIR PARTIDOS PARA ACTUALIZAR ESTADÍSTICAS
+    # 6. IDENTIFICAR PARTIDOS PARA ACTUALIZAR ESTADÍSTICAS
     #
-    # Nuevos + últimos RECENT_DAYS días
+    #    A. Partidos nuevos
+    #    B. Partidos de los últimos RECENT_DAYS días
     # ============================================================
 
     new_match_ids = set(
@@ -177,7 +189,7 @@ def main():
     )
 
     logging.info(
-        f"TOTAL estadísticas a consultar: "
+        f"Total partidos a consultar estadísticas: "
         f"{len(stats_match_ids)}"
     )
 
@@ -221,6 +233,8 @@ def main():
             .astype(str)
         )
 
+        # Una combinación única:
+        # match_id + key
         df_stats_filtered = (
             df_stats_filtered
             .drop_duplicates(
@@ -251,7 +265,7 @@ def main():
     )
 
     # ============================================================
-    # 9. LEER STATS ACTUALES
+    # 9. LEER STATS EXISTENTES
     # ============================================================
 
     existing_stats_data = (
@@ -263,14 +277,18 @@ def main():
     )
 
     # ============================================================
-    # 10. CREAR MAPA DE FILAS EXISTENTES
+    # 10. MAPEAR FILAS EXISTENTES
     #
-    # CLAVE ÚNICA:
-    # match_id + key
+    # Clave:
     #
-    # Así:
-    # partido 123 + ballPossession
-    # es una fila única.
+    #     match_id + key
+    #
+    # Ejemplo:
+    #
+    #     12345 + ballPossession
+    #     12345 + totalShots
+    #
+    # Cada combinación apunta a una fila de Sheets.
     # ============================================================
 
     existing_row_map = {}
@@ -298,17 +316,23 @@ def main():
 
                 if match_id and key:
 
-                    # +2 porque:
+                    # Google Sheets:
                     # fila 1 = encabezados
-                    # dataframe comienza en índice 0
+                    # DataFrame:
+                    # índice 0 = primera fila de datos
+                    #
+                    # Por eso +2.
+                    row_number = idx + 2
+
                     existing_row_map[
                         (match_id, key)
-                    ] = idx + 2
+                    ] = row_number
 
     # ============================================================
-    # 11. ACTUALIZAR O INSERTAR STATS
+    # 11. PREPARAR ACTUALIZACIONES Y NUEVOS REGISTROS
     # ============================================================
 
+    updates = []
     rows_to_append = []
 
     updated_count = 0
@@ -337,9 +361,9 @@ def main():
             key
         )
 
-        # --------------------------------------------------------
-        # YA EXISTE → ACTUALIZAR
-        # --------------------------------------------------------
+        # ========================================================
+        # YA EXISTE
+        # ========================================================
 
         if unique_key in existing_row_map:
 
@@ -347,17 +371,16 @@ def main():
                 unique_key
             ]
 
-            ws_stats.update(
-                f"A{row_number}:E{row_number}",
-                [values],
-                value_input_option="USER_ENTERED"
-            )
+            updates.append({
+                "range": f"A{row_number}:E{row_number}",
+                "values": [values]
+            })
 
             updated_count += 1
 
-        # --------------------------------------------------------
-        # NO EXISTE → AGREGAR
-        # --------------------------------------------------------
+        # ========================================================
+        # NO EXISTE
+        # ========================================================
 
         else:
 
@@ -365,8 +388,9 @@ def main():
                 values
             )
 
-            # Lo agregamos al mapa para evitar
-            # duplicados dentro de la misma ejecución.
+            # Importante:
+            # agregamos la clave al mapa para evitar
+            # duplicados dentro de esta misma ejecución.
             existing_row_map[
                 unique_key
             ] = -1
@@ -374,7 +398,56 @@ def main():
             inserted_count += 1
 
     # ============================================================
-    # 12. INSERTAR NUEVAS ESTADÍSTICAS EN BLOQUE
+    # 12. ACTUALIZAR STATS EN LOTES
+    #
+    # ANTES:
+    #
+    #     1 llamada API por fila
+    #
+    # AHORA:
+    #
+    #     100 actualizaciones por llamada
+    #
+    # Esto reduce drásticamente las escrituras.
+    # ============================================================
+
+    total_updates = len(updates)
+
+    if total_updates > 0:
+
+        logging.info(
+            f"Actualizaciones de estadísticas a realizar: "
+            f"{total_updates}"
+        )
+
+        for start in range(
+            0,
+            total_updates,
+            BATCH_SIZE
+        ):
+
+            end = min(
+                start + BATCH_SIZE,
+                total_updates
+            )
+
+            batch = updates[
+                start:end
+            ]
+
+            ws_stats.batch_update(
+                batch,
+                value_input_option="USER_ENTERED"
+            )
+
+            logging.info(
+                f"Batch actualizado: "
+                f"{start + 1}-{end} "
+                f"de {total_updates}"
+            )
+
+    # ============================================================
+    # 13. AGREGAR NUEVAS STATS EN UNA SOLA ESCRITURA
     # ============================================================
 
     if rows_to_append:
@@ -384,40 +457,44 @@ def main():
             value_input_option="USER_ENTERED"
         )
 
-    logging.info(
-        f"Estadísticas actualizadas: {updated_count}"
-    )
-
-    logging.info(
-        f"Estadísticas nuevas: {inserted_count}"
-    )
+        logging.info(
+            f"Agregadas {len(rows_to_append)} "
+            f"estadísticas nuevas."
+        )
 
     # ============================================================
-    # 13. RESUMEN
+    # 14. RESUMEN FINAL
     # ============================================================
 
     logging.info("==========================================")
     logging.info("ACTUALIZACIÓN TERMINADA")
+    logging.info("==========================================")
+
     logging.info(
         f"Total partidos encontrados: "
         f"{len(df_matches)}"
     )
+
     logging.info(
-        f"Nuevos partidos agregados: "
+        f"Partidos nuevos agregados: "
         f"{len(new_matches)}"
     )
+
     logging.info(
-        f"Partidos revisados para estadísticas: "
+        f"Partidos consultados para estadísticas: "
         f"{len(stats_match_ids)}"
     )
+
     logging.info(
-        f"Stats actualizadas: "
+        f"Estadísticas actualizadas: "
         f"{updated_count}"
     )
+
     logging.info(
-        f"Stats nuevas: "
+        f"Estadísticas nuevas: "
         f"{inserted_count}"
     )
+
     logging.info("==========================================")
 
 
