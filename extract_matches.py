@@ -11,10 +11,6 @@ def get_matches(headers, league_season_list):
 
     all_matches = []
 
-    # ============================================================
-    # RECORRER CADA LIGA + TEMPORADA
-    # ============================================================
-
     for league_id, season_id in league_season_list:
 
         page_index = 0
@@ -23,17 +19,6 @@ def get_matches(headers, league_season_list):
         logging.info(
             f"INICIO - Liga {league_id} | Temporada {season_id}"
         )
-
-        # ========================================================
-        # PAGINACIÓN
-        #
-        # Antes:
-        #   solo pageIndex = 0
-        #
-        # Ahora:
-        #   pageIndex = 0, 1, 2, 3...
-        #   hasta que no haya más datos
-        # ========================================================
 
         while True:
 
@@ -48,28 +33,22 @@ def get_matches(headers, league_season_list):
                 f"matches-{league_id}-{season_id}-page-{page_index}"
             )
 
-            # Si la API falla
             if not data:
                 logging.warning(
                     f"Sin respuesta - Liga {league_id} | "
-                    f"Temporada {season_id} | Página {page_index}"
+                    f"Temporada {season_id} | "
+                    f"Página {page_index}"
                 )
                 break
 
             events = data.get("events", [])
 
-            # Si no hay partidos, terminamos la paginación
             if not events:
                 logging.info(
                     f"FIN PAGINACIÓN - Liga {league_id} | "
-                    f"Temporada {season_id} | "
-                    f"No hay datos en página {page_index}"
+                    f"Temporada {season_id}"
                 )
                 break
-
-            # ====================================================
-            # EVITAR REPETIR LA MISMA PÁGINA
-            # ====================================================
 
             current_ids = {
                 event.get("id")
@@ -80,14 +59,13 @@ def get_matches(headers, league_season_list):
             new_ids = current_ids - seen_match_ids
 
             if not new_ids:
-
                 logging.warning(
                     f"La API repitió datos. "
-                    f"Se detiene paginación - Liga {league_id} | "
+                    f"Se detiene paginación - "
+                    f"Liga {league_id} | "
                     f"Temporada {season_id} | "
                     f"Página {page_index}"
                 )
-
                 break
 
             seen_match_ids.update(current_ids)
@@ -98,27 +76,17 @@ def get_matches(headers, league_season_list):
                 f"Liga {league_id} | "
                 f"Temporada {season_id} | "
                 f"Página {page_index} | "
-                f"Partidos recibidos: {len(events)} | "
+                f"Partidos: {len(events)} | "
                 f"Acumulados: {len(seen_match_ids)}"
             )
 
             page_index += 1
 
-    # ============================================================
-    # SI NO SE RECIBIÓ NADA
-    # ============================================================
-
     if not all_matches:
-
         logging.error(
-            "No se recibieron partidos de ninguna temporada."
+            "No se recibieron partidos."
         )
-
         return pd.DataFrame()
-
-    # ============================================================
-    # JSON → DATAFRAME
-    # ============================================================
 
     df = pd.json_normalize(all_matches)
 
@@ -146,13 +114,7 @@ def get_matches(headers, league_season_list):
         "awayRedCards"
     ]
 
-    # reindex evita que el programa se caiga si alguna columna
-    # no viene en una respuesta puntual de la API.
     df = df.reindex(columns=cols)
-
-    # ============================================================
-    # FECHA
-    # ============================================================
 
     df["date"] = pd.to_datetime(
         df["startTimestamp"],
@@ -160,34 +122,23 @@ def get_matches(headers, league_season_list):
         errors="coerce"
     )
 
-    # ============================================================
-    # SOLO PARTIDOS TERMINADOS
-    # ============================================================
-
+    # Solo partidos terminados
     df = df[
         df["status.type"] == "finished"
     ].copy()
 
-    # ============================================================
-    # RENOMBRAR ID
-    # ============================================================
-
     df = df.rename(
-        columns={
-            "id": "match_id"
-        }
+        columns={"id": "match_id"}
     )
 
-    # ============================================================
-    # ELIMINAR DUPLICADOS
-    # ============================================================
+    df["match_id"] = df["match_id"].astype(str)
 
     df = df.drop_duplicates(
         subset=["match_id"]
     )
 
     logging.info(
-        f"TOTAL PARTIDOS TERMINADOS EXTRAÍDOS: {len(df)}"
+        f"TOTAL PARTIDOS TERMINADOS: {len(df)}"
     )
 
     return df
